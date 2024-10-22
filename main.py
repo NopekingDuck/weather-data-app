@@ -1,14 +1,14 @@
-from datetime import date
 import json
 import openmeteo_requests
 import requests_cache
+import sqlite3
 import pandas as pd
 import matplotlib as mpl
 import matplotlib.pyplot as plt
+from datetime import date
 from svgpath2mpl import parse_path
 from retry_requests import retry
 
-import sqlite3
 
 
 def get_weather():
@@ -21,7 +21,7 @@ def get_weather():
     # The order of variables in hourly or daily is important to assign them correctly below
     url = "https://api.open-meteo.com/v1/forecast"
 
-    #prepare the parameters: coords + variables + date
+    # Prepare the parameters: coords + variables + date
     params = {
         "latitude": 51.5085,
         "longitude": -0.1257,
@@ -59,25 +59,25 @@ def process_df(dataframe):
     with open("jsons/weather_codes.json") as wc_json:
         weather_codes = json.load(wc_json)
 
-    #   make a new column in the dataframe containing the weather string matching provided weather code in that row
+    # make a new column in the dataframe containing the weather string matching provided weather code in that row
     weather = []
     for value in dataframe['weather_code']:
         x = str(int(value))
         weather.append(weather_codes[x])
     out_df['weather'] = weather
 
-    # # remove the unneeded weather codes column
-    # out_df = out_df.drop('weather_code', axis=1)
+    # Remove the unneeded weather codes column
+    # Out_df = out_df.drop('weather_code', axis=1)
 
-    # round temperature to 1 digit and convert to int
+    # Round temperature to 1 digit and convert to int
     out_df['temperature_2m'] = dataframe['temperature_2m'].round(1)
     out_df['temperature_2m'] = out_df['temperature_2m'].astype(int)
 
-    # round windspeed to 1 digit and convert to int
+    # Round windspeed to 1 digit and convert to int
     out_df['wind_speed_10m'] = dataframe['wind_speed_10m'].round(1)
     out_df['wind_speed_10m'] = out_df['wind_speed_10m'].astype(int)
 
-    # round precipitation to 1 digit
+    # Round precipitation to 1 digit
     out_df['precipitation'] = dataframe['precipitation'].round(1)
 
     return out_df
@@ -112,7 +112,6 @@ def csv_to_db():
 
 
 def make_markers(weather_code):
-
     # Match the weather code to the relevant svg marker name
     marker_codes = {
         0: 'clear',
@@ -159,8 +158,8 @@ def make_markers(weather_code):
         custom_marker = custom_marker.transformed(mpl.transforms.Affine2D().rotate_deg(180))
         custom_marker = custom_marker.transformed(mpl.transforms.Affine2D().scale(-1, 1))
 
-
     return custom_marker
+
 
 def graph_it():
 
@@ -174,30 +173,21 @@ def graph_it():
     df['hour'] = df['date'].dt.time.astype(str)
     df['hour'] = df['hour'].str[:-3]
 
-
     # Get unique weather codes
     weather_set = set(df['weather_code'])
 
     # Plot a graph of temperature over time with markers matching the relevant weather for that hour
     fig, ax = plt.subplots(figsize=(14,6))
-    # ax.set_title('1 day weather and temp')
     for weather in weather_set:
         indices = df.index[df['weather_code'] == weather].tolist()
         custom_marker = make_markers(weather)
         ax.plot(df['hour'], df['temperature_2m'], marker=custom_marker, markevery=indices, markersize=20)
 
- # can we do this without drawing 3 graphs?
     plt.subplot(131)
     plt.bar(df['hour'], df['wind_speed_10m'])
     plt.suptitle("weather stuff")
 
-
     plt.savefig('test_temp_1.png')
-
-
-
-
-    ### fix the date axis so that it has the hour if it is a 1 day graph
 
 
 if __name__ == '__main__':
