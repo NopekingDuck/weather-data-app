@@ -5,6 +5,7 @@ import sqlite3
 import pandas as pd
 import matplotlib as mpl
 import matplotlib.pyplot as plt
+import streamlit as st
 from datetime import date
 from svgpath2mpl import parse_path
 from retry_requests import retry
@@ -66,9 +67,6 @@ def process_df(dataframe):
         weather.append(weather_codes[x])
     out_df['weather'] = weather
 
-    # Remove the unneeded weather codes column
-    # Out_df = out_df.drop('weather_code', axis=1)
-
     # Round temperature to 1 digit and convert to int
     out_df['temperature_2m'] = dataframe['temperature_2m'].round(1)
     out_df['temperature_2m'] = out_df['temperature_2m'].astype(int)
@@ -105,7 +103,7 @@ def csv_to_db():
     ''')
 
     # Set name of your CSV here that you want to add to db
-    weekly = pd.read_csv('14-10-2024_7_day_forecast.csv')
+    weekly = pd.read_csv('28-10-2024_7_day_forecast.csv')
     weekly.to_sql('weekly', conn, if_exists='append', index = False)
 
     c.close()
@@ -173,26 +171,36 @@ def graph_it():
     df['hour'] = df['date'].dt.time.astype(str)
     df['hour'] = df['hour'].str[:-3]
 
+    # Plot a bar chart of wind speed
+    fig, ax1 = plt.subplots(figsize=(14,6))
+    ax1.set_ylabel("Wind speed")
+    ax1.bar(df['hour'], df['wind_speed_10m'], color='cyan', alpha=0.5)
+
+    # Plot a line graph of temperature over the wind speed bars, with custom markers showing weather
+    ax2 = ax1.twinx()
+    ax2.set_ylabel("Temperature")
+
     # Get unique weather codes
     weather_set = set(df['weather_code'])
 
-    # Plot a graph of temperature over time with markers matching the relevant weather for that hour
-    fig, ax = plt.subplots(figsize=(14,6))
     for weather in weather_set:
         indices = df.index[df['weather_code'] == weather].tolist()
         custom_marker = make_markers(weather)
-        ax.plot(df['hour'], df['temperature_2m'], marker=custom_marker, markevery=indices, markersize=20)
+        ax2.plot(df['hour'], df['temperature_2m'], marker=custom_marker, markevery=indices, markersize=20)
 
-    plt.subplot(131)
-    plt.bar(df['hour'], df['wind_speed_10m'])
-    plt.suptitle("weather stuff")
+    # Set the title of the graph
+    df['days_months'] = df['date'].dt.strftime('%d/%m')
+    day = df['days_months'].unique()
+    plt.suptitle(f"Weather, temperature and windspeed for {day[0]}")
 
-    plt.savefig('test_temp_1.png')
+    fig # streamlit will draw this.
+
 
 
 if __name__ == '__main__':
     # get_weather()
     # csv_to_db()
     graph_it()
+
 
 
