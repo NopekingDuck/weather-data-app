@@ -1,3 +1,4 @@
+import datetime
 import json
 import openmeteo_requests
 import requests_cache
@@ -6,10 +7,8 @@ import pandas as pd
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import streamlit as st
-from datetime import date
 from svgpath2mpl import parse_path
 from retry_requests import retry
-
 
 
 def get_weather():
@@ -51,7 +50,7 @@ def get_weather():
 
     hourly_dataframe = pd.DataFrame(data=hourly_data)
     new_df = process_df(hourly_dataframe)
-    new_df.to_csv(f"{date.today().strftime("%d-%m-%Y")}_7_day_forecast.csv", encoding='utf-8', index=False)
+    new_df.to_csv("weekly_forecast.csv", encoding='utf-8', index=False)
 
 
 def process_df(dataframe):
@@ -103,10 +102,22 @@ def csv_to_db():
     ''')
 
     # Set name of your CSV here that you want to add to db
-    weekly = pd.read_csv('28-10-2024_7_day_forecast.csv')
+    weekly = pd.read_csv('weekly_forecast.csv')
     weekly.to_sql('weekly', conn, if_exists='append', index = False)
 
     c.close()
+
+
+def check_date():
+    # check today's date when app is run and refresh db if it is out of date
+    st.session_state.todays_date = datetime.date.today()
+    df = pd.read_csv('weekly_forecast.csv', usecols=[0], skiprows=1, nrows=1, parse_dates=[0])
+    start_date = df.iloc[0,0]
+    if not start_date.strftime('%Y-%m-%d') == st.session_state.todays_date:
+        get_weather()
+        csv_to_db()
+
+    # To look at - If a session runs over 1 day into another the cache maybe doesn't update
 
 
 def make_markers(weather_code):
@@ -159,48 +170,75 @@ def make_markers(weather_code):
     return custom_marker
 
 
-def graph_it():
-
+@st.cache_data
+def get_data_from_db():
     # Get 1 day hourly data from database
     conn = sqlite3.connect('weather_data.db')
-    query = 'SELECT * FROM weekly LIMIT 24 OFFSET 1;'
+    query = 'SELECT * FROM weekly;'
     df = pd.read_sql_query(query, conn)
+    conn.close()
+    return df
+
+
+def graph_it(day):
+
+    df = get_data_from_db()
 
     # Get the hours and minutes from the date column
     df['date'] = pd.to_datetime(df['date'])
     df['hour'] = df['date'].dt.time.astype(str)
     df['hour'] = df['hour'].str[:-3]
 
+    # Make a df with only the selected day's values
+    today = day[0:2]
+    df['day'] = df['date'].dt.day
+    day_int = int(today)
+    todays_df = df[df['day'] == day_int]
+    todays_df.reset_index(drop=True, inplace=True)
+
     # Plot a bar chart of wind speed
     fig, ax1 = plt.subplots(figsize=(14,6))
-    ax1.set_ylabel("Wind speed")
-    ax1.bar(df['hour'], df['wind_speed_10m'], color='cyan', alpha=0.5)
+    ax1.set_ylabel("Wind speed", color='cyan')
+    ax1.bar(todays_df['hour'], todays_df['wind_speed_10m'], color='cyan', alpha=0.5)
 
     # Plot a line graph of temperature over the wind speed bars, with custom markers showing weather
     ax2 = ax1.twinx()
     ax2.set_ylabel("Temperature")
 
     # Get unique weather codes
-    weather_set = set(df['weather_code'])
+    weather_set = set(todays_df['weather_code'])
 
     for weather in weather_set:
-        indices = df.index[df['weather_code'] == weather].tolist()
+        indices = todays_df.index[todays_df['weather_code'] == weather].tolist()
         custom_marker = make_markers(weather)
-        ax2.plot(df['hour'], df['temperature_2m'], marker=custom_marker, markevery=indices, markersize=20)
+        ax2.plot(todays_df['hour'], todays_df['temperature_2m'], color='orange', marker=custom_marker, markevery=indices, markersize=25, alpha=0.7)
 
-    # Set the title of the graph
+    return fig
+
+
+def get_unique_dates(df):
+    df['date'] = pd.to_datetime(df['date'])
     df['days_months'] = df['date'].dt.strftime('%d/%m')
-    day = df['days_months'].unique()
-    plt.suptitle(f"Weather, temperature and windspeed for {day[0]}")
+    dates_list = df['days_months'].unique()
+    return dates_list
 
-    fig # streamlit will draw this.
 
+def display_it():
+    # What streamlit will display
+    st.title('Weather forecast for the week')
+    dates_list = get_unique_dates(get_data_from_db()).tolist()
+    tabs = st.tabs(dates_list)
+
+
+    for tab, day in zip(tabs, dates_list):
+        with tab:
+            st.subheader(f'This is the date: {day}')
+            st.pyplot(graph_it(day))
 
 
 if __name__ == '__main__':
-    # get_weather()
-    # csv_to_db()
-    graph_it()
+    check_date()
+    display_it()
 
 
 
