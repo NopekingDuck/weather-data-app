@@ -7,11 +7,20 @@ import pandas as pd
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import streamlit as st
+from streamlit import session_state
 from svgpath2mpl import parse_path
 from retry_requests import retry
 
 
-def get_weather():
+def setup():
+    if "current_location" not in st.session_state:
+        st.session_state.current_location = "london"
+
+    if "current_df" not in st.session_state:
+        st.session_state.current_df = get_data_from_db("london")
+
+
+def get_weather(location):
     # Set up the Open-Meteo API client with cache and retry on error
     cache_session = requests_cache.CachedSession('.cache', expire_after=3600)
     retry_session = retry(cache_session, retries=5, backoff_factor=0.2)
@@ -21,13 +30,20 @@ def get_weather():
     # The order of variables in hourly or daily is important to assign them correctly below
     url = "https://api.open-meteo.com/v1/forecast"
 
-    # Prepare the parameters: coords + variables + date
-    params = {
-        "latitude": 51.5085,
-        "longitude": -0.1257,
+    with open("jsons/coords.json") as coords_json:
+        coords_list = json.load(coords_json)
+
+    coords = {
+        "latitude": coords_list[location][0],
+        "longitude": coords_list[location][1],
+    }
+
+    # Prepare the parameters: coords + variables
+    weather_types = {
         "hourly": ["temperature_2m", "precipitation_probability", "precipitation", "weather_code", "wind_speed_10m"],
         "timezone": "Europe/London"
     }
+    params = coords | weather_types
     responses = openmeteo.weather_api(url, params=params)
     response = responses[0]
 
@@ -50,16 +66,16 @@ def get_weather():
 
     hourly_dataframe = pd.DataFrame(data=hourly_data)
     new_df = process_df(hourly_dataframe)
-    new_df.to_csv("weekly_forecast.csv", encoding='utf-8', index=False)
+    new_df.to_csv(f"weekly_{location}_forecast.csv", encoding='utf-8', index=False)
 
 
 def process_df(dataframe):
     out_df = dataframe
-    # get dictionary of weather codes
+    # Get dictionary of weather codes
     with open("jsons/weather_codes.json") as wc_json:
         weather_codes = json.load(wc_json)
 
-    # make a new column in the dataframe containing the weather string matching provided weather code in that row
+    # Make a new column in the dataframe containing the weather string matching provided weather code in that row
     weather = []
     for value in dataframe['weather_code']:
         x = str(int(value))
@@ -80,16 +96,16 @@ def process_df(dataframe):
     return out_df
 
 
-def csv_to_db():
+def csv_to_db(location):
     conn = sqlite3.connect('weather_data.db')
     c = conn.cursor()
 
-    c.execute('''
-    DROP TABLE IF EXISTS weekly;
+    c.execute(f'''
+    DROP TABLE IF EXISTS weekly_{location};
     ''')
 
-    c.execute('''
-    CREATE TABLE IF NOT EXISTS weekly(
+    c.execute(f'''
+    CREATE TABLE IF NOT EXISTS weekly_{location}(
     id INTEGER NOT NULL PRIMARY KEY,
     date text,
     temperature_2m INTEGER,
@@ -102,8 +118,8 @@ def csv_to_db():
     ''')
 
     # Set name of your CSV here that you want to add to db
-    weekly = pd.read_csv('weekly_forecast.csv')
-    weekly.to_sql('weekly', conn, if_exists='append', index = False)
+    weekly = pd.read_csv(f'weekly_{location}_forecast.csv')
+    weekly.to_sql(f'weekly_{location}', conn, if_exists='append', index = False)
 
     c.close()
 
@@ -111,13 +127,34 @@ def csv_to_db():
 def check_date():
     # check today's date when app is run and refresh db if it is out of date
     st.session_state.todays_date = datetime.date.today()
-    df = pd.read_csv('weekly_forecast.csv', usecols=[0], skiprows=1, nrows=1, parse_dates=[0])
+    current_location = st.session_state.current_location
+    df = pd.read_csv(f'weekly_{current_location}_forecast.csv', usecols=[0], skiprows=1, nrows=1, parse_dates=[0])
     start_date = df.iloc[0,0]
+
     if not start_date.strftime('%Y-%m-%d') == st.session_state.todays_date:
-        get_weather()
-        csv_to_db()
+        get_weather(current_location)
+        csv_to_db(current_location)
 
     # To look at - If a session runs over 1 day into another the cache maybe doesn't update
+    # Solution maybe to pass today's date to the get data from db call, as different args may force
+    # the function to run again
+
+
+@st.cache_data
+def get_data_from_db(location):
+    # Get weekly data from database for location
+    conn = sqlite3.connect('weather_data.db')
+    query = f'SELECT * FROM weekly_{location};'
+    df = pd.read_sql_query(query, conn)
+    conn.close()
+    return df
+
+
+def update_session(location):
+    st.session_state.current_location = location
+    get_weather(location)
+    csv_to_db(location)     #Consider looking at if not exists
+    st.session_state.current_df = get_data_from_db(location)
 
 
 def make_markers(weather_code):
@@ -150,6 +187,9 @@ def make_markers(weather_code):
         99: 'storms'
     }
 
+    # if the above is in json may need to do below looking for int of key in dictionary after json is loaded
+    # converted_dict = {int(key): value for key, value in original_dict.items()}
+
 
     with open("jsons/marker_paths.json") as marker_paths_json:
         marker_paths = json.load(marker_paths_json)
@@ -170,19 +210,8 @@ def make_markers(weather_code):
     return custom_marker
 
 
-@st.cache_data
-def get_data_from_db():
-    # Get 1 day hourly data from database
-    conn = sqlite3.connect('weather_data.db')
-    query = 'SELECT * FROM weekly;'
-    df = pd.read_sql_query(query, conn)
-    conn.close()
-    return df
-
-
 def graph_it(day):
-
-    df = get_data_from_db()
+    df = st.session_state.current_df
 
     # Get the hours and minutes from the date column
     df['date'] = pd.to_datetime(df['date'])
@@ -226,7 +255,15 @@ def get_unique_dates(df):
 def display_it():
     # What streamlit will display
     st.title('Weather forecast for the week')
-    dates_list = get_unique_dates(get_data_from_db()).tolist()
+    st.subheader(st.session_state.current_location.title())
+
+    locations = ['london', 'tignes', 'whistler', 'bologna', 'vienna']
+    # side panel with key locations
+    with st.sidebar:
+        for location in locations:
+            st.button(location.title(), on_click=update_session, args=(location,))
+
+    dates_list = get_unique_dates(get_data_from_db(st.session_state.current_location)).tolist()
     tabs = st.tabs(dates_list)
 
 
@@ -236,7 +273,12 @@ def display_it():
             st.pyplot(graph_it(day))
 
 
+            # look in to multiple page app
+
+
 if __name__ == '__main__':
+    setup()
+    update_session(st.session_state.current_location)
     check_date()
     display_it()
 
