@@ -182,6 +182,8 @@ def make_markers(weather_code):
         80: 'showers',
         81: 'showers',
         82: 'showers',
+        85: 'snow',
+        86: 'snow',
         95: 'storms',
         96: 'storms',
         99: 'storms'
