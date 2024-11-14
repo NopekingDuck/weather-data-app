@@ -159,46 +159,20 @@ def update_session(location):
 
 def make_markers(weather_code):
     # Match the weather code to the relevant svg marker name
-    marker_codes = {
-        0: 'clear',
-        1: 'partly_cloudy',
-        2: 'partly_cloudy',
-        3: 'cloudy',
-        45: 'cloudy',
-        51: 'rain',
-        53: 'rain',
-        55: 'rain',
-        56: 'rain',
-        57: 'rain',
-        61: 'rain',
-        63: 'rain',
-        65: 'rain',
-        66: 'hail',
-        67: 'hail',
-        71: 'snow',
-        73: 'snow',
-        75: 'snow',
-        77: 'snow',
-        80: 'showers',
-        81: 'showers',
-        82: 'showers',
-        85: 'snow',
-        86: 'snow',
-        95: 'storms',
-        96: 'storms',
-        99: 'storms'
-    }
 
-    # if the above is in json may need to do below looking for int of key in dictionary after json is loaded
-    # converted_dict = {int(key): value for key, value in original_dict.items()}
+
+    with open("jsons/marker_codes.json") as marker_codes_json:
+        marker_codes = json.load(marker_codes_json)
+
+    converted_markers = {int(key): value for key, value in marker_codes.items()}
 
 
     with open("jsons/marker_paths.json") as marker_paths_json:
         marker_paths = json.load(marker_paths_json)
 
 
-    if weather_code in marker_codes:
-        custom_marker = parse_path(marker_paths[marker_codes.get(weather_code)])
+    if weather_code in converted_markers:
+        custom_marker = parse_path(marker_paths[converted_markers.get(weather_code)])
         custom_marker.vertices -= custom_marker.vertices.mean(axis=0)
         custom_marker = custom_marker.transformed(mpl.transforms.Affine2D().rotate_deg(180))
         custom_marker = custom_marker.transformed(mpl.transforms.Affine2D().scale(-1, 1))
