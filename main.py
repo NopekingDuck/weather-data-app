@@ -19,6 +19,9 @@ def setup():
     if "current_df" not in st.session_state:
         st.session_state.current_df = get_data_from_db("london")
 
+    if "todays_date" not in st.session_state:
+        st.session_state.todays_date = datetime.date.today()
+
 
 def get_weather(location):
     # Set up the Open-Meteo API client with cache and retry on error
@@ -126,18 +129,12 @@ def csv_to_db(location):
 
 def check_date():
     # check today's date when app is run and refresh db if it is out of date
-    st.session_state.todays_date = datetime.date.today()
     current_location = st.session_state.current_location
     df = pd.read_csv(f'weekly_{current_location}_forecast.csv', usecols=[0], skiprows=1, nrows=1, parse_dates=[0])
     start_date = df.iloc[0,0]
 
     if not start_date.strftime('%Y-%m-%d') == st.session_state.todays_date:
-        get_weather(current_location)
-        csv_to_db(current_location)
-
-    # To look at - If a session runs over 1 day into another the cache maybe doesn't update
-    # Solution maybe to pass today's date to the get data from db call, as different args may force
-    # the function to run again
+        update_session(current_location)
 
 
 @st.cache_data
@@ -153,14 +150,13 @@ def get_data_from_db(location):
 def update_session(location):
     st.session_state.current_location = location
     get_weather(location)
-    csv_to_db(location)     #Consider looking at if not exists
+    csv_to_db(location)
     st.session_state.current_df = get_data_from_db(location)
 
 
 def make_markers(weather_code):
+
     # Match the weather code to the relevant svg marker name
-
-
     with open("jsons/marker_codes.json") as marker_codes_json:
         marker_codes = json.load(marker_codes_json)
 
@@ -239,17 +235,16 @@ def display_it():
         for location in locations:
             st.button(location.title(), on_click=update_session, args=(location,))
 
+
+    # Create 1 tab for each day of data
     dates_list = get_unique_dates(get_data_from_db(st.session_state.current_location)).tolist()
     tabs = st.tabs(dates_list)
-
 
     for tab, day in zip(tabs, dates_list):
         with tab:
             st.subheader(f'This is the date: {day}')
             st.pyplot(graph_it(day))
 
-
-            # look in to multiple page app
 
 
 if __name__ == '__main__':
