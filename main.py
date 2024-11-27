@@ -1,38 +1,30 @@
 import datetime
 import json
-import openmeteo_requests
-import requests_cache
+from urllib.parse import urlencode
+import urllib3
+from urllib3.util.retry import Retry
+from urllib3.util import Timeout
 import sqlite3
 import pandas as pd
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import streamlit as st
-from streamlit import session_state
 from svgpath2mpl import parse_path
-from retry_requests import retry
 
 
 def setup():
     if "current_location" not in st.session_state:
         st.session_state.current_location = "london"
 
-    if "current_df" not in st.session_state:
-        st.session_state.current_df = get_data_from_db("london")
-
     if "todays_date" not in st.session_state:
         st.session_state.todays_date = datetime.date.today()
 
+    if "current_df" not in st.session_state:
+        st.session_state.current_df = get_data_from_db("london", st.session_state.todays_date)
 
-def get_weather(location):
-    # Set up the Open-Meteo API client with cache and retry on error
-    cache_session = requests_cache.CachedSession('.cache', expire_after=3600)
-    retry_session = retry(cache_session, retries=5, backoff_factor=0.2)
-    openmeteo = openmeteo_requests.Client(session=retry_session)
 
-    # Make sure all required weather variables are listed here
-    # The order of variables in hourly or daily is important to assign them correctly below
-    url = "https://api.open-meteo.com/v1/forecast"
 
+def prepare_coordinates(location):
     with open("jsons/coords.json") as coords_json:
         coords_list = json.load(coords_json)
 
@@ -40,37 +32,65 @@ def get_weather(location):
         "latitude": coords_list[location][0],
         "longitude": coords_list[location][1],
     }
+    return coords
 
-    # Prepare the parameters: coords + variables
+def make_url(coords):
+    url = "https://api.open-meteo.com/v1/forecast"
     weather_types = {
         "hourly": ["temperature_2m", "precipitation_probability", "precipitation", "weather_code", "wind_speed_10m"],
         "timezone": "Europe/London"
     }
     params = coords | weather_types
-    responses = openmeteo.weather_api(url, params=params)
-    response = responses[0]
+    encoded_params = urlencode(params, doseq=True)
+    full_url = url + "?" + encoded_params
+    return full_url
 
-    # Process hourly data. The order of variables needs to be the same as requested.
-    hourly = response.Hourly()
-    hourly_temperature_2m = hourly.Variables(0).ValuesAsNumpy()
-    hourly_precipitation_probability = hourly.Variables(1).ValuesAsNumpy()
-    hourly_precipitation = hourly.Variables(2).ValuesAsNumpy()
-    hourly_weather_code = hourly.Variables(3).ValuesAsNumpy()
-    hourly_wind_speed_10m = hourly.Variables(4).ValuesAsNumpy()
+@st.cache_data
+def get_data_from_api(url):
+    retries = Retry(total=5,
+                    backoff_factor=0.2,
+                    status_forcelist=[500, 502, 503, 504])
+
+    http = urllib3.PoolManager(retries=retries)
+
+    try:
+        response = http.request("GET", url, timeout=Timeout(connect=1.0, read=2.0))
+        if response.status >= 400:
+            raise ValueError(f"HTTP error status code: {response.status}")
+        else:
+            print("Request successful")
+            data = response.data
+            values = json.loads(data)
+    except urllib3.exceptions.MaxRetryError as e:
+        raise RuntimeError(f"Max retries exceeded with url: {e.reason}") from e
+    except urllib3.exceptions.TimeoutError as e:
+        raise RuntimeError(f"Request timed out: {e}") from e
+    except Exception as e:
+        raise RuntimeError(f"An unexpected error occurred: {e}") from e
+
+    return values
+
+
+def response_to_pandas(response):
+    hourly = response['hourly']
+    hourly_time = hourly['time']
+    hourly_temperature_2m = hourly['temperature_2m']
+    hourly_precipitation_probability = hourly['precipitation_probability']
+    hourly_precipitation = hourly['precipitation']
+    hourly_weather_code = hourly['weather_code']
+    hourly_wind_speed_10m = hourly['wind_speed_10m']
 
     hourly_data = {"date": pd.date_range(
-        start=pd.to_datetime(hourly.Time(), unit="s", utc=True),
-        end=pd.to_datetime(hourly.TimeEnd(), unit="s", utc=True),
-        freq=pd.Timedelta(seconds=hourly.Interval()),
-        inclusive="left"
+        start=pd.to_datetime(hourly_time[0]),
+        end=pd.to_datetime(hourly_time[len(hourly_time)-1]),
+        freq='h'
     ), "temperature_2m": hourly_temperature_2m, "precipitation_probability": hourly_precipitation_probability,
         "precipitation": hourly_precipitation, "weather_code": hourly_weather_code,
         "wind_speed_10m": hourly_wind_speed_10m}
 
     hourly_dataframe = pd.DataFrame(data=hourly_data)
-    new_df = process_df(hourly_dataframe)
-    new_df.to_csv(f"weekly_{location}_forecast.csv", encoding='utf-8', index=False)
 
+    return hourly_dataframe
 
 def process_df(dataframe):
     out_df = dataframe
@@ -138,20 +158,27 @@ def check_date():
 
 
 @st.cache_data
-def get_data_from_db(location):
+def get_data_from_db(location, date):
     # Get weekly data from database for location
     conn = sqlite3.connect('weather_data.db')
     query = f'SELECT * FROM weekly_{location};'
     df = pd.read_sql_query(query, conn)
     conn.close()
+    print("Cache updated")
     return df
 
 
 def update_session(location):
     st.session_state.current_location = location
-    get_weather(location)
+    coords = prepare_coordinates(location)
+    url = make_url(coords)
+    data = get_data_from_api(url)
+    df = response_to_pandas(data)
+    processed_df = process_df(df)
+    processed_df.to_csv(f"weekly_{location}_forecast.csv", encoding='utf-8', index=False)
     csv_to_db(location)
-    st.session_state.current_df = get_data_from_db(location)
+    st.session_state.current_df = get_data_from_db(location, st.session_state.todays_date)
+    ### Either check the api data is already in csv form or find another way to cache to reduce api calls
 
 
 def make_markers(weather_code):
@@ -237,7 +264,7 @@ def display_it():
 
 
     # Create 1 tab for each day of data
-    dates_list = get_unique_dates(get_data_from_db(st.session_state.current_location)).tolist()
+    dates_list = get_unique_dates(get_data_from_db(st.session_state.current_location, st.session_state.todays_date)).tolist()
     tabs = st.tabs(dates_list)
 
     for tab, day in zip(tabs, dates_list):
