@@ -23,7 +23,6 @@ def setup():
         st.session_state.current_df = get_data_from_db("london", st.session_state.todays_date)
 
 
-
 def prepare_coordinates(location):
     with open("jsons/coords.json") as coords_json:
         coords_list = json.load(coords_json)
@@ -44,6 +43,7 @@ def make_url(coords):
     encoded_params = urlencode(params, doseq=True)
     full_url = url + "?" + encoded_params
     return full_url
+
 
 @st.cache_data
 def get_data_from_api(url):
@@ -91,6 +91,7 @@ def response_to_pandas(response):
     hourly_dataframe = pd.DataFrame(data=hourly_data)
 
     return hourly_dataframe
+
 
 def process_df(dataframe):
     out_df = dataframe
@@ -189,10 +190,8 @@ def make_markers(weather_code):
 
     converted_markers = {int(key): value for key, value in marker_codes.items()}
 
-
     with open("jsons/marker_paths.json") as marker_paths_json:
         marker_paths = json.load(marker_paths_json)
-
 
     if weather_code in converted_markers:
         custom_marker = parse_path(marker_paths[converted_markers.get(weather_code)])
@@ -262,7 +261,6 @@ def display_it():
         for location in locations:
             st.button(location.title(), on_click=update_session, args=(location,))
 
-
     # Create 1 tab for each day of data
     dates_list = get_unique_dates(get_data_from_db(st.session_state.current_location, st.session_state.todays_date)).tolist()
     tabs = st.tabs(dates_list)
@@ -271,7 +269,6 @@ def display_it():
         with tab:
             st.subheader(f'This is the date: {day}')
             st.pyplot(graph_it(day))
-
 
 
 if __name__ == '__main__':
