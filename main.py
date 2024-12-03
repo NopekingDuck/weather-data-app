@@ -37,7 +37,7 @@ def prepare_coordinates(location):
 
 
 def make_url(coords):
-    url = "https://api.open-meteo.com/v1/forecast"
+    url = "https://api.open-meteo.com/v1/forecasts"
     weather_types = {
         "hourly": [
             "temperature_2m",
@@ -56,26 +56,29 @@ def make_url(coords):
 
 @st.cache_data
 def get_data_from_api(url):
-    retries = Retry(total=5, backoff_factor=0.2, status_forcelist=[500, 502, 503, 504])
+    retries = Retry(
+        total=5,
+        backoff_factor=0.2,
+        status_forcelist=[500, 502, 503, 504]
+    )
 
     http = urllib3.PoolManager(retries=retries)
 
     try:
         response = http.request("GET", url, timeout=Timeout(connect=1.0, read=2.0))
         if response.status >= 400:
-            raise ValueError(f"HTTP error status code: {response.status}")
+            st.write(f"Error connecting to api: HTTP error status code: {response.status}")
         else:
             print("Request successful")
             data = response.data
             values = json.loads(data)
+            return values
     except urllib3.exceptions.MaxRetryError as e:
-        raise RuntimeError(f"Max retries exceeded with url: {e.reason}") from e
+        st.write(f"Max retries exceeded with url: {e.reason}")
     except urllib3.exceptions.TimeoutError as e:
-        raise RuntimeError(f"Request timed out: {e}") from e
+        st.write(f"Request timed out: {e}")
     except Exception as e:
-        raise RuntimeError(f"An unexpected error occurred: {e}") from e
-
-    return values
+        st.write(f"An unexpected error occurred: {e}")
 
 
 def response_to_pandas(response):
