@@ -1,5 +1,7 @@
 import datetime
 import json
+from ftplib import error_perm
+from json import JSONDecodeError
 from urllib.parse import urlencode
 import urllib3
 from urllib3.util.retry import Retry
@@ -26,18 +28,25 @@ def setup():
 
 
 def prepare_coordinates(location):
-    with open("jsons/coords.json") as coords_json:
-        coords_list = json.load(coords_json)
+    coords = {}
+    try:
+        with open("jsons/coords.json") as coords_json:
+            coords_list = json.load(coords_json)
 
-    coords = {
-        "latitude": coords_list[location][0],
-        "longitude": coords_list[location][1],
-    }
-    return coords
+        coords = {
+            "latitude": coords_list[location][0],
+            "longitude": coords_list[location][1],
+        }
+    except JSONDecodeError as e:
+        st.write(f"Error loading json: {e}")
+    except KeyError:
+        st.write("Location could not be found in coordinates dictionary")
+    finally:
+        return coords
 
 
 def make_url(coords):
-    url = "https://api.open-meteo.com/v1/forecasts"
+    url = "https://api.open-meteo.com/v1/forecast"
     weather_types = {
         "hourly": [
             "temperature_2m",
@@ -67,7 +76,7 @@ def get_data_from_api(url):
     try:
         response = http.request("GET", url, timeout=Timeout(connect=1.0, read=2.0))
         if response.status >= 400:
-            st.write(f"Error connecting to api: HTTP error status code: {response.status}")
+            st.write(f"Error connecting to api. HTTP error status code: {response.status}")
         else:
             print("Request successful")
             data = response.data
@@ -82,29 +91,26 @@ def get_data_from_api(url):
 
 
 def response_to_pandas(response):
+    # hourly_time = hourly["time"]
+    # hourly_temperature_2m = hourly["temperature_2m"]
+    # hourly_precipitation_probability = hourly["precipitation_probability"]
+    # hourly_precipitation = hourly["precipitation"]
+    # hourly_weather_code = hourly["weather_code"]
+    # hourly_wind_speed_10m = hourly["wind_speed_10m"]
     hourly = response["hourly"]
-    hourly_time = hourly["time"]
-    hourly_temperature_2m = hourly["temperature_2m"]
-    hourly_precipitation_probability = hourly["precipitation_probability"]
-    hourly_precipitation = hourly["precipitation"]
-    hourly_weather_code = hourly["weather_code"]
-    hourly_wind_speed_10m = hourly["wind_speed_10m"]
-
     hourly_data = {
         "date": pd.date_range(
-            start=pd.to_datetime(hourly_time[0]),
-            end=pd.to_datetime(hourly_time[len(hourly_time) - 1]),
+            start=pd.to_datetime(hourly["time"][0]),
+            end=pd.to_datetime(hourly["time"][len(hourly["time"]) - 1]),
             freq="h",
         ),
-        "temperature_2m": hourly_temperature_2m,
-        "precipitation_probability": hourly_precipitation_probability,
-        "precipitation": hourly_precipitation,
-        "weather_code": hourly_weather_code,
-        "wind_speed_10m": hourly_wind_speed_10m,
+        "temperature_2m": hourly["temperature_2m"],
+        "precipitation_probability": hourly["precipitation_probability"],
+        "precipitation": hourly["precipitation"],
+        "weather_code": hourly["weather_code"],
+        "wind_speed_10m": hourly["wind_speed_10m"],
     }
-
     hourly_dataframe = pd.DataFrame(data=hourly_data)
-
     return hourly_dataframe
 
 
@@ -196,18 +202,26 @@ def get_data_from_db(location, date):
 
 def update_session(location):
     st.session_state.current_location = location
-    coords = prepare_coordinates(location)
-    url = make_url(coords)
-    data = get_data_from_api(url)
-    df = response_to_pandas(data)
-    processed_df = process_df(df)
-    processed_df.to_csv(
-        f"weekly_{location}_forecast.csv", encoding="utf-8", index=False
-    )
-    csv_to_db(location)
-    st.session_state.current_df = get_data_from_db(
-        location, st.session_state.todays_date
-    )
+    ### current approach, can use Raise inside lower down ones, that can be caught here and displayed?
+    try:
+        coords = prepare_coordinates(location)
+        url = make_url(coords)
+        data = get_data_from_api(url)
+        df = response_to_pandas(data)
+        processed_df = process_df(df)
+        processed_df.to_csv(
+            f"weekly_{location}_forecast.csv", encoding="utf-8", index=False
+        )
+        csv_to_db(location)
+        st.session_state.current_df = get_data_from_db(
+            location, st.session_state.todays_date
+        )
+    except TypeError as e:
+        st.exception(e)
+    except ValueError as e:
+        st.exception(e)
+    except Exception as e:
+        st.exception(e)
     ### Either check the api data is already in csv form or find another way to cache to reduce api calls
 
 
