@@ -1,6 +1,5 @@
 import datetime
 import json
-from ftplib import error_perm
 from json import JSONDecodeError
 from urllib.parse import urlencode
 import urllib3
@@ -25,6 +24,16 @@ def setup():
         st.session_state.current_df = get_data_from_db(
             "london", st.session_state.todays_date
         )
+    if "weather_types" not in st.session_state:
+        st.session_state.weather_types = {
+        "hourly": [
+            "temperature_2m",
+            "precipitation_probability",
+            "precipitation",
+            "weather_code",
+            "wind_speed_10m",
+        ]
+        }
 
 
 def prepare_coordinates(location):
@@ -45,19 +54,12 @@ def prepare_coordinates(location):
         return coords
 
 
-def make_url(coords):
+def make_url(coords, weather_types):
     url = "https://api.open-meteo.com/v1/forecast"
-    weather_types = {
-        "hourly": [
-            "temperature_2m",
-            "precipitation_probability",
-            "precipitation",
-            "weather_code",
-            "wind_speed_10m",
-        ],
-        "timezone": "Europe/London",
+    app_timezone = {
+        "timezone": "Europe/London"
     }
-    params = coords | weather_types
+    params = coords | weather_types | app_timezone
     encoded_params = urlencode(params, doseq=True)
     full_url = url + "?" + encoded_params
     return full_url
@@ -90,26 +92,21 @@ def get_data_from_api(url):
         st.write(f"An unexpected error occurred: {e}")
 
 
-def response_to_pandas(response):
-    # hourly_time = hourly["time"]
-    # hourly_temperature_2m = hourly["temperature_2m"]
-    # hourly_precipitation_probability = hourly["precipitation_probability"]
-    # hourly_precipitation = hourly["precipitation"]
-    # hourly_weather_code = hourly["weather_code"]
-    # hourly_wind_speed_10m = hourly["wind_speed_10m"]
+def response_to_pandas(response, weather_types):
     hourly = response["hourly"]
-    hourly_data = {
+    date_column = {
         "date": pd.date_range(
-            start=pd.to_datetime(hourly["time"][0]),
-            end=pd.to_datetime(hourly["time"][len(hourly["time"]) - 1]),
-            freq="h",
-        ),
-        "temperature_2m": hourly["temperature_2m"],
-        "precipitation_probability": hourly["precipitation_probability"],
-        "precipitation": hourly["precipitation"],
-        "weather_code": hourly["weather_code"],
-        "wind_speed_10m": hourly["wind_speed_10m"],
+                start=pd.to_datetime(hourly["time"][0]),
+                end=pd.to_datetime(hourly["time"][len(hourly["time"]) - 1]),
+                freq="h",
+            )
     }
+
+    optional_weather = {}
+    for wt in weather_types["hourly"]:
+        optional_weather[wt] = hourly[wt]
+
+    hourly_data = date_column | optional_weather
     hourly_dataframe = pd.DataFrame(data=hourly_data)
     return hourly_dataframe
 
@@ -202,26 +199,20 @@ def get_data_from_db(location, date):
 
 def update_session(location):
     st.session_state.current_location = location
-    ### current approach, can use Raise inside lower down ones, that can be caught here and displayed?
-    try:
-        coords = prepare_coordinates(location)
-        url = make_url(coords)
-        data = get_data_from_api(url)
-        df = response_to_pandas(data)
-        processed_df = process_df(df)
-        processed_df.to_csv(
-            f"weekly_{location}_forecast.csv", encoding="utf-8", index=False
-        )
-        csv_to_db(location)
-        st.session_state.current_df = get_data_from_db(
-            location, st.session_state.todays_date
-        )
-    except TypeError as e:
-        st.exception(e)
-    except ValueError as e:
-        st.exception(e)
-    except Exception as e:
-        st.exception(e)
+    weather_types = st.session_state.weather_types
+    coords = prepare_coordinates(location)
+    url = make_url(coords, weather_types)
+    data = get_data_from_api(url)
+    df = response_to_pandas(data, weather_types)
+    processed_df = process_df(df)
+    processed_df.to_csv(
+        f"weekly_{location}_forecast.csv", encoding="utf-8", index=False
+    )
+    csv_to_db(location)
+    st.session_state.current_df = get_data_from_db(
+        location, st.session_state.todays_date
+    )
+
     ### Either check the api data is already in csv form or find another way to cache to reduce api calls
 
 
