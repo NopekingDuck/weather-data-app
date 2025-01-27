@@ -213,8 +213,6 @@ def update_session(location):
         location, st.session_state.todays_date
     )
 
-    ### Either check the api data is already in csv form or find another way to cache to reduce api calls
-
 
 def make_markers(weather_code):
 
